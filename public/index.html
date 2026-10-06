@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leave Now</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #16181d; --muted: #5d6470; --line: #e3e6eb;
+    --good: #1a7f4b; --warn: #a86400; --bad: #c0392b; --accent: #2457d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111317; --card: #1b1e24; --text: #eceef2; --muted: #9aa2ae; --line: #2b2f37;
+      --good: #4cc38a; --warn: #f0a640; --bad: #ff6b5e; --accent: #6f9bff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 520px; margin: 0 auto; padding: 16px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; }
+  h1 { font-size: 1.3rem; margin: 0; }
+  .muted { color: var(--muted); font-size: .85rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-top: 12px; }
+  .advice { font-size: 1.35rem; font-weight: 650; }
+  .advice small { display: block; font-size: .9rem; font-weight: 400; color: var(--muted); margin-top: 4px; }
+  .countdown { font-size: 2.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .svc { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; font-weight: 650; }
+  .svc .no { background: var(--accent); color: #fff; border-radius: 8px; padding: 2px 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  td { padding: 6px 4px; border-top: 1px solid var(--line); }
+  td.min { font-weight: 650; font-variant-numeric: tabular-nums; width: 70px; }
+  .pill { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: .78rem; border: 1px solid currentColor; }
+  .SEA { color: var(--good); } .SDA { color: var(--warn); } .LSD { color: var(--bad); }
+  .est { color: var(--muted); font-style: italic; }
+  .best td { background: color-mix(in srgb, var(--good) 12%, transparent); }
+  .gone { opacity: .45; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
+    border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin-top: 8px; }
+  input { font: inherit; width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); }
+  details summary { cursor: pointer; font-weight: 600; }
+  .banner { background: color-mix(in srgb, var(--warn) 15%, transparent); border-color: var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Leave Now</h1>
+    <span class="muted" id="updated"></span>
+  </header>
+  <div class="muted" id="stopName"></div>
+
+  <div class="card banner" id="demo" hidden>
+    <strong>Demo data.</strong> Add your DataMall key to <code>.env</code> and restart the server for live buses.
+  </div>
+
+  <div class="card">
+    <div class="advice" id="advice">Loading…</div>
+    <div class="countdown" id="countdown"></div>
+    <div class="row" style="margin-top:8px">
+      <button class="primary" id="alarmBtn">Alarm me when to leave</button>
+      <button id="refreshBtn">Refresh</button>
+    </div>
+    <div class="muted" id="alarmStatus" style="margin-top:6px"></div>
+  </div>
+
+  <div class="card" id="weather">Weather loading…</div>
+
+  <div class="card" id="buses"></div>
+
+  <div class="card">
+    <details>
+      <summary>My commute settings</summary>
+      <label>Bus stop code <input id="sStop" inputmode="numeric"></label>
+      <label>Bus services (comma separated) <input id="sSvcs"></label>
+      <label>Walk to stop (min) <input id="sWalk" type="number" min="0"></label>
+      <label>Max extra wait for a better bus (min) <input id="sWait" type="number" min="0"></label>
+      <label>Daily reminder time (optional, e.g. 07:45) <input id="sDaily" type="time"></label>
+      <div class="row" style="margin-top:10px"><button class="primary" id="saveBtn">Save</button></div>
+    </details>
+  </div>
+  <p class="muted">Load: <span class="pill SEA">Seats</span> <span class="pill SDA">Standing</span> <span class="pill LSD">Packed</span>.
+    <span class="est">Estimated</span> = timetable guess, not live GPS. Data: LTA DataMall, NEA via data.gov.sg.</p>
+</main>
+
+<script>
+const DEFAULTS = { stop: '14241', services: ['145', '176'], walk: 8, maxWait: 15, daily: '' };
+const LOAD = { SEA: 'Seats', SDA: 'Standing', LSD: 'Packed' };
+const LOAD_SCORE = { SEA: 0, SDA: 1, LSD: 3 };
+const DECK = { SD: 'Single deck', DD: 'Double deck', BD: 'Bendy' };
+const BUFFER = 1; // minutes of slack at the stop
+
+let settings = load();
+let plan = null;          // { leaveAt: Date, bus }
+let alarmOn = false, alarmFired = false;
+let raining = false;
+
+function load() {
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('leaveNow') || '{}') }; }
+  catch { return { ...DEFAULTS }; }
+}
+function save() { try { localStorage.setItem('leaveNow', JSON.stringify(settings)); } catch {} }
+
+const $ = id => document.getElementById(id);
+const fmtTime = d => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function busesFrom(data) {
+  const list = [];
+  for (const s of data.Services || []) {
+    if (!settings.services.includes(s.ServiceNo)) continue;
+    for (const k of ['NextBus', 'NextBus2', 'NextBus3']) {
+      const b = s[k];
+      if (!b || !b.EstimatedArrival) continue;
+      const at = new Date(b.EstimatedArrival);
+      list.push({ svc: s.ServiceNo, at, mins: (at - Date.now()) / 60000, load: b.Load, type: b.Type, live: +b.Monitored === 1 });
+    }
+  }
+  return list;
+}
+
+// Pick the bus that's comfortable and catchable within the max extra wait.
+function choose(buses) {
+  const reach = buses.filter(b => b.mins >= settings.walk + BUFFER).sort((a, b) => a.mins - b.mins);
+  if (!reach.length) return null;
+  const first = reach[0];
+  const window = reach.filter(b => b.mins - first.mins <= settings.maxWait);
+  const score = b => (LOAD_SCORE[b.load] ?? 1) + (b.type === 'DD' ? -0.5 : 0) + (b.live ? 0 : 0.5) + (b.mins - first.mins) * 0.08;
+  const best = window.reduce((a, b) => (score(b) < score(a) ? b : a));
+  const leaveAt = new Date(best.at - (settings.walk + BUFFER) * 60000);
+  const skipped = reach.filter(b => b.at < best.at && b.load === 'LSD');
+  return { bus: best, leaveAt, skipped, first };
+}
+
+function render(data) {
+  $('demo').hidden = !data.demo;
+  const buses = busesFrom(data);
+  plan = choose(buses);
+
+  if (!plan) {
+    $('advice').innerHTML = buses.length ? 'No bus you can catch in time right now.<small>Check again shortly.</small>'
+      : `No arrivals for ${settings.services.join(', ')}.<small>Services may not be running now.</small>`;
+  } else {
+    const b = plan.bus;
+    const why = [DECK[b.type] || b.type, LOAD[b.load] || b.load, b.live ? 'live' : 'estimated'].join(', ');
+    let extra = plan.skipped.length ? `Skipping packed ${plan.skipped.map(s => s.svc + ' @ ' + fmtTime(s.at)).join(', ')}. ` : '';
+    if (raining) extra += 'Rain: take an umbrella, use the sheltered path. Stop may be crowded, so aim to arrive just in time.';
+    $('advice').innerHTML = `Leave at ${fmtTime(plan.leaveAt)} for bus ${b.svc} (${fmtTime(b.at)})<small>${why}. ${extra}</small>`;
+  }
+
+  // Bus table
+  const best = plan?.bus;
+  $('buses').innerHTML = settings.services.map(svc => {
+    const rows = buses.filter(b => b.svc === svc).map(b => {
+      const m = Math.round(b.mins);
+      const cls = [b === best ? 'best' : '', b.mins < settings.walk + BUFFER ? 'gone' : ''].join(' ');
+      return `<tr class="${cls}"><td class="min">${m <= 0 ? 'Arr' : m + ' min'}</td>
+        <td>${fmtTime(b.at)}</td>
+        <td><span class="pill ${b.load}">${LOAD[b.load] || '?'}</span></td>
+        <td>${DECK[b.type] || b.type || ''}</td>
+        <td class="${b.live ? '' : 'est'}">${b.live ? 'Live' : 'Estimated'}</td></tr>`;
+    }).join('') || '<tr><td colspan="5" class="muted">No arrivals</td></tr>';
+    return `<div class="svc"><span class="no">${svc}</span></div><table>${rows}</table>`;
+  }).join('');
+  $('updated').textContent = 'Updated ' + fmtTime(new Date());
+  tick();
+}
+
+async function refresh() {
+  try {
+    const r = await fetch(`/api/bus?stop=${settings.stop}`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    render(data);
+  } catch (e) {
+    $('advice').innerHTML = `Couldn't load buses<small>${e.message}</small>`;
+  }
+}
+
+async function refreshWeather() {
+  try {
+    const w = await (await fetch(`/api/weather?stop=${settings.stop}`)).json();
+    if (w.error) throw new Error(w.error);
+    raining = /rain|shower|thunder/i.test(w.forecast);
+    if (w.stopName) $('stopName').textContent = `Stop ${settings.stop}: ${w.stopName}`;
+    else $('stopName').textContent = `Stop ${settings.stop}`;
+    $('weather').innerHTML = `<strong>${raining ? '☔' : '⛅'} ${w.forecast}</strong> near ${w.area}
+      <div class="muted">${raining ? 'Bring an umbrella. Expect a busier bus stop.' : 'No umbrella needed.'} ${w.validPeriod || ''}</div>`;
+  } catch (e) {
+    $('weather').innerHTML = `<span class="muted">Weather unavailable (${e.message})</span>`;
+  }
+}
+
+// Countdown + leave alarm
+function tick() {
+  if (!plan) { $('countdown').textContent = ''; return; }
+  const secs = Math.round((plan.leaveAt - Date.now()) / 1000);
+  $('countdown').textContent = secs <= 0 ? 'Go now!' : `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  if (alarmOn && secs <= 0 && !alarmFired) {
+    alarmFired = true;
+    notify('Time to leave!', `Bus ${plan.bus.svc} at ${fmtTime(plan.bus.at)}. ${raining ? 'Take an umbrella.' : ''}`);
+  }
+  checkDaily();
+}
+
+function beep() {
+  try {
+    const ctx = new AudioContext();
+    [0, 0.35, 0.7].forEach(t => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.25, ctx.currentTime + t); g.gain.setValueAtTime(0, ctx.currentTime + t + 0.25);
+      o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.3);
+    });
+  } catch {}
+}
+function notify(title, body) {
+  beep();
+  if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body });
+  else alert(`${title}\n${body}`);
+}
+
+// Daily reminder: a heads-up at a set time to open the app and check the plan
+let lastDaily = '';
+function checkDaily() {
+  if (!settings.daily) return;
+  const now = new Date(), hm = now.toTimeString().slice(0, 5), day = now.toDateString();
+  if (hm === settings.daily && lastDaily !== day) {
+    lastDaily = day;
+    notify('Commute check', plan ? `Leave at ${fmtTime(plan.leaveAt)} for bus ${plan.bus.svc}.` : 'Open Leave Now to plan your bus.');
+  }
+}
+
+$('alarmBtn').onclick = async () => {
+  if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
+  alarmOn = !alarmOn; alarmFired = false;
+  $('alarmBtn').textContent = alarmOn ? 'Cancel alarm' : 'Alarm me when to leave';
+  $('alarmStatus').textContent = alarmOn ? 'Alarm set. Keep this tab open; it updates as buses change.' : '';
+};
+$('refreshBtn').onclick = () => { refresh(); refreshWeather(); };
+
+function fillSettings() {
+  $('sStop').value = settings.stop; $('sSvcs').value = settings.services.join(', ');
+  $('sWalk').value = settings.walk; $('sWait').value = settings.maxWait; $('sDaily').value = settings.daily;
+}
+$('saveBtn').onclick = () => {
+  settings = {
+    stop: $('sStop').value.trim() || DEFAULTS.stop,
+    services: $('sSvcs').value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean),
+    walk: Math.max(0, +$('sWalk').value || 0),
+    maxWait: Math.max(0, +$('sWait').value || 0),
+    daily: $('sDaily').value,
+  };
+  save(); refresh(); refreshWeather();
+};
+
+fillSettings();
+refresh(); refreshWeather();
+setInterval(refresh, 30000);
+setInterval(refreshWeather, 10 * 60000);
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
