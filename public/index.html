@@ -86,7 +86,9 @@
     <span class="est">Estimated</span> = timetable guess, not live GPS. Data: LTA DataMall, NEA via data.gov.sg.</p>
 </main>
 
+<script src="config.js"></script>
 <script>
+const API = window.API_BASE || '';
 const DEFAULTS = { stop: '14241', services: ['145', '176'], walk: 8, maxWait: 15, daily: '' };
 const LOAD = { SEA: 'Seats', SDA: 'Standing', LSD: 'Packed' };
 const LOAD_SCORE = { SEA: 0, SDA: 1, LSD: 3 };
@@ -170,7 +172,7 @@ function render(data) {
 
 async function refresh() {
   try {
-    const r = await fetch(`/api/bus?stop=${settings.stop}`);
+    const r = await fetch(`${API}/api/bus?stop=${settings.stop}`);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     render(data);
@@ -181,7 +183,7 @@ async function refresh() {
 
 async function refreshWeather() {
   try {
-    const w = await (await fetch(`/api/weather?stop=${settings.stop}`)).json();
+    const w = await (await fetch(`${API}/api/weather?stop=${settings.stop}`)).json();
     if (w.error) throw new Error(w.error);
     raining = /rain|shower|thunder/i.test(w.forecast);
     if (w.stopName) $('stopName').textContent = `Stop ${settings.stop}: ${w.stopName}`;
